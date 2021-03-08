@@ -8,7 +8,10 @@ if ($OutlookProfileExists -eq $true) {
     # Signature Variables #
 
     $SigSource = $home + "\Kimmel & Associates\Kimmel Users - EmailSignatures\" + $env:username 
-  
+    if (!(Test-Path -path $SigSource)) { 
+        write-host "Sharepoint folder missing... Cannot continue" -ForegroundColor Red
+        exit 
+    }
     # Environment variables #
 
     $AppData = $env:appdata 

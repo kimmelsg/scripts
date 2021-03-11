@@ -1,6 +1,6 @@
 #Checks if outlook profile exists - we only want it to run on people who have a profile so they dont get an annoying profile popup #
-
-$OutlookProfileExists = Test-Path "C:\Users\$env:Username\AppData\Local\Microsoft\Outlook"
+$OutlookProfilePath = $env:localappdata + "\Microsoft\Outlook"
+$OutlookProfileExists = Test-Path $OutlookProfilePath
 
 if ($OutlookProfileExists -eq $true) {
     Write-Host "User Outlook profile exists.. continuing.." -ForegroundColor Yellow 
@@ -9,9 +9,9 @@ if ($OutlookProfileExists -eq $true) {
 
     $SigSource = $home + "\Kimmel & Associates\Kimmel Users - EmailSignatures\" + $env:username 
     if (!(Test-Path -path $SigSource)) { 
-        write-host "Sharepoint folder missing... Cannot continue" -ForegroundColor Red
-        exit 
-    }
+        throw "Sharepoint folder missing... Cannot continue" -ForegroundColor Red
+    } 
+  
     # Environment variables #
 
     $AppData = $env:appdata 
@@ -51,6 +51,5 @@ if ($OutlookProfileExists -eq $true) {
     }   
 }
 else {
-    Write-Host "User Outlook profile doesn't exist. This script will run again on next logon and check for Outlook profile existence.." -ForegroundColor Yellow 
-    exit
+    throw "User Outlook profile doesn't exist. This script will run again on next logon and check for Outlook profile existence.." -ForegroundColor Red 
 }

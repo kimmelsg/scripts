@@ -1,4 +1,4 @@
-﻿#Module name:      Invoke-asIntuneLogonScript
+#Module name:      Invoke-asIntuneLogonScript
 #Author:           Jos Lieben
 #Author Blog:      http://www.lieben.nu
 #Date:             11-06-2019
@@ -9,20 +9,21 @@
 #@michael_mardahl for the idea to remove the script from the registry so it automatically reruns
 #@Justin Murray for a .NET example of how to impersonate a logged in user
 
-$autoRerunMinutes = 60 #If set to 0, only runs at logon, else, runs every X minutes AND at logon, expect random delays of up to 5 minutes due to bandwidth, service availability, local resources etc. I strongly recommend 0 or >60 as input value to avoid being throttled
+$autoRerunMinutes = 720 #If set to 0, only runs at logon, else, runs every X minutes AND at logon, expect random delays of up to 5 minutes due to bandwidth, service availability, local resources etc. I strongly recommend 0 or >60 as input value to avoid being throttled
 $visibleToUser = $False
 
 #Uncomment for debug logs:
 Start-Transcript -Path (Join-Path $Env:temp -ChildPath "intuneRestarter.log") -Append -Confirm:$False
-if($Env:USERPROFILE.EndsWith("system32\config\systemprofile")){
+if ($Env:USERPROFILE.EndsWith("system32\config\systemprofile")) {
     $runningAsSystem = $True
     Write-Output "Running as SYSTEM"
-}else{
+}
+else {
     $runningAsSystem = $False
     Write-Output "Running as $($env:USERNAME)"
 }
 
-$source=@"
+$source = @"
 using System;
 using System.Runtime.InteropServices;
 
@@ -298,7 +299,7 @@ namespace murrayju
 
 $scriptPath = $PSCommandPath
 
-if($runningAsSystem){
+if ($runningAsSystem) {
     Write-Output "Running in system context, script should be running in user context, we should auto impersonate"
     #Generate registry removal path
     $regPath = "HKLM:\Software\Microsoft\IntuneManagementExtension\Policies\$($scriptPath.Substring($scriptPath.LastIndexOf("_")-36,36))\$($scriptPath.Substring($scriptPath.LastIndexOf("_")+1,36))"
@@ -308,27 +309,28 @@ if($runningAsSystem){
     $targetUserSessionId = (Select-String -Pattern "$($scriptPath.Substring($scriptPath.LastIndexOf("_")-36,36)) in session (\d+)]" $logLocation | Select-Object -Last 1).Matches[0].Groups[1].Value
 
     $compilerParameters = New-Object System.CodeDom.Compiler.CompilerParameters
-    $compilerParameters.CompilerOptions="/unsafe"
+    $compilerParameters.CompilerOptions = "/unsafe"
     $compilerParameters.GenerateInMemory = $True
     Add-Type -TypeDefinition $source -Language CSharp -CompilerParameters $compilerParameters
     
-    if($visibleToUser){
-        $res = [murrayju.ProcessExtensions]::StartProcessAsCurrentUser($targetUserSessionId, "c:\windows\system32\WindowsPowerShell\v1.0\powershell.exe", " -WindowStyle Normal -nologo -executionpolicy ByPass -Command `"& '$scriptPath'`"",$True)
-    }else{
-        $res = [murrayju.ProcessExtensions]::StartProcessAsCurrentUser($targetUserSessionId, "c:\windows\system32\WindowsPowerShell\v1.0\powershell.exe", " -WindowStyle Hidden -nologo -executionpolicy ByPass -Command `"& '$scriptPath'`"",$False)
+    if ($visibleToUser) {
+        $res = [murrayju.ProcessExtensions]::StartProcessAsCurrentUser($targetUserSessionId, "c:\windows\system32\WindowsPowerShell\v1.0\powershell.exe", " -WindowStyle Normal -nologo -executionpolicy ByPass -Command `"& '$scriptPath'`"", $True)
+    }
+    else {
+        $res = [murrayju.ProcessExtensions]::StartProcessAsCurrentUser($targetUserSessionId, "c:\windows\system32\WindowsPowerShell\v1.0\powershell.exe", " -WindowStyle Hidden -nologo -executionpolicy ByPass -Command `"& '$scriptPath'`"", $False)
     }
     
     Sleep -s 1
 
     #get new process info, we could use this in a future version to await completion
-    $process = Get-WmiObject Win32_Process -Filter "name = 'powershell.exe'" | where {$_.CommandLine -like "*$scriptPath*"}
+    $process = Get-WmiObject Win32_Process -Filter "name = 'powershell.exe'" | where { $_.CommandLine -like "*$scriptPath*" }
 
     #start a seperate process as SYSTEM to monitor for user logoff/logon and preferred scheduled reruns
     start-process "c:\windows\system32\WindowsPowerShell\v1.0\powershell.exe" -WindowStyle Hidden -ArgumentList "`$slept = 0;`$script:refreshNeeded = `$false;`$sysevent = [microsoft.win32.systemevents];Register-ObjectEvent -InputObject `$sysevent -EventName `"SessionEnding`" -Action {`$script:refreshNeeded = `$true;};Register-ObjectEvent -InputObject `$sysevent -EventName `"SessionEnded`"  -Action {`$script:refreshNeeded = `$true;};Register-ObjectEvent -InputObject `$sysevent -EventName `"SessionSwitch`"  -Action {`$script:refreshNeeded = `$true;};while(`$true){;`$slept += 0.2;if((`$slept -gt ($autoRerunMinutes*60) -and $autoRerunMinutes -ne 0) -or `$script:refreshNeeded){;`$slept=0;`$script:refreshNeeded=`$False;Remove-Item $regPath -Force -Confirm:`$False -ErrorAction SilentlyContinue;Restart-Service -Name IntuneManagementExtension -Force;Exit;};Start-Sleep -m 200;};"    
     
     #set removal key in case computer crashes or something like that
     $runOnceEntries = (Get-ItemProperty -path "HKLM:\Software\Microsoft\Windows\CurrentVersion\RunOnce")
-    if([Array]@($runOnceEntries.PSObject.Properties.Name | % {if($runOnceEntries.$_ -eq "reg delete $regPath /f"){$_}}).Count -le 0){
+    if ([Array]@($runOnceEntries.PSObject.Properties.Name | % { if ($runOnceEntries.$_ -eq "reg delete $regPath /f") { $_ } }).Count -le 0) {
         New-ItemProperty -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\RunOnce" -Name $(Get-Random) -Value "reg delete $regPath /f" -PropertyType String -Force -ErrorAction SilentlyContinue
     }
     start-sleep -s 10
@@ -337,65 +339,17 @@ if($runningAsSystem){
 }
 
 ##YOUR CODE HERE
-
-#Checks if outlook profile exists - we only want it to run on people who have a profile so they dont get an annoying profile popup #
-$OutlookProfilePath = $env:localappdata + "\Microsoft\Outlook"
-$OutlookProfileExists = Test-Path $OutlookProfilePath
-
-if ($OutlookProfileExists -eq $true) {
-    Write-Host "User Outlook profile exists.. continuing.." -ForegroundColor Yellow 
-
-    # Signature Variables #
-
-    $SigSource = $home + "\Kimmel & Associates\Kimmel Users - EmailSignatures\" + $env:username 
-    if (!(Test-Path -path $SigSource)) { 
+$FileSource = $home + "\Kimmel & Associates\Kimmel Users - TeamsBackgrounds\" + $env:username 
+if (!(Test-Path -path $FileSource)) { 
         throw "Sharepoint folder missing... Cannot continue" 
-    } 
-  
-    # Environment variables #
+} 
+$TeamsPath = $env:localappdata + "\Microsoft\Teams\Backgrounds\Uploads"
+if (!(Test-Path -path $TeamsPath)) { 
+        New-Item $LocalTeamsPath -Type Directory 
+} 
 
-    $AppData = $env:appdata 
-    $SigPath = '\Microsoft\Signatures' 
-    $LocalSignaturePath = $AppData + $SigPath 
-
-    # Check signature path # 
-
-    if (!(Test-Path -path $LocalSignaturePath)) { 
-        New-Item $LocalSignaturePath -Type Directory 
-    } 
-    Copy-Item -Path $SigSource\*.* -Destination $LocalSignaturePath -Force
-
-
-
-    # Set as Default Signature #
-
-    If (Test-Path HKCU:'\Software\Microsoft\Office\16.0') { 
-
-        Write-host "Setting signature for Office 2019"-ForegroundColor Green 
-        Write-host "Setting signature for Office 2019 as available" -ForegroundColor Green 
-
-        If ((Get-ItemProperty -Name 'First-Run' -Path HKCU:'\Software\Microsoft\Office\16.0\Outlook\Setup' -ErrorAction SilentlyContinue))   
-        {  
-            Remove-ItemProperty -Path HKCU:'\Software\Microsoft\Office\16.0\Outlook\Setup' -Name 'First-Run' -Force  
-        }  
-
-        If (!(Get-ItemProperty -Name 'NewSignature' -Path HKCU:'\Software\Microsoft\Office\16.0\Common\MailSettings' -ErrorAction SilentlyContinue))   
-        {  
-            New-ItemProperty -Path HKCU:'\Software\Microsoft\Office\16.0\Common\MailSettings' -Name 'NewSignature' -Value $env:username -PropertyType 'String' -Force  
-        }  
- 
-        If (!(Get-ItemProperty -Name 'ReplySignature' -Path HKCU:'\Software\Microsoft\Office\16.0\Common\MailSettings' -ErrorAction SilentlyContinue))   
-        {  
-            New-ItemProperty -Path HKCU:'\Software\Microsoft\Office\16.0\Common\MailSettings' -Name 'ReplySignature' -Value $env:username -PropertyType 'String' -Force 
-        }  
-    }   
-}
-else {
-    throw "User Outlook profile doesn't exist. This script will run again on next logon and check for Outlook profile existence.." 
-}
-
-
-
+Copy-Item -Path $FileSource\*.* -Destination $TeamsPath -Force    
+throw "All teams backgrounds successfully copied"
 
 ##END OF YOUR CODE
 throw "Bye" #final line needed so intune will not stop rerunning the script
